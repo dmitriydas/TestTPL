@@ -1,94 +1,114 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
-using System.Threading.Tasks.Dataflow;
-using System.Timers;
-using CSharpFunctionalExtensions;
+﻿    using System;
+    using System.Collections.Generic;
+    using System.Diagnostics;
+    using System.Net;
+    using System.Text;
+    using System.Threading;
+    using System.Threading.Tasks;
+    using System.Threading.Tasks.Dataflow;
+    using System.Timers;
+    using CSharpFunctionalExtensions;
 
-namespace TestTPL
-{
-    public class ServicePipeline
+    namespace TestTPL
     {
-        public const int batches = 100;
-        private int currentBatch = 0;
-
-        public ServicePipeline(int maxRequestsInParallel)
+        public class ServicePipeline
         {
-            MaxRequestsInParallel = maxRequestsInParallel;
-        }
+            public const int batches = 100;
+            private int currentBatch = 0;
 
-        public int MaxRequestsInParallel { get; }
-        public BufferBlock<MyData> QueueBlock { get; private set; }
-        public List<TransformBlock<MyData, Result>> ExecutionBlocks { get; private set; }
-        public ActionBlock<Result> ResultBlock { get; private set; }
-
-        private void Init()
-        {
-            QueueBlock = new BufferBlock<MyData>(new DataflowBlockOptions() { BoundedCapacity = MaxRequestsInParallel });
-            ExecutionBlocks = new List<TransformBlock<MyData, Result>>();
-            ResultBlock = new ActionBlock<Result>(_ => _.OnFailure(() => Console.WriteLine($"Error: {_.Error}")));
-
-            for (int blockIndex = 0; blockIndex < MaxRequestsInParallel; blockIndex++)
+            public ServicePipeline(int maxRequestsInParallel)
             {
-                var executionBlock = new TransformBlock<MyData, Result>((d) =>
-                {
-                    return ProcessService.ExecuteAsync(d);
-                }, new ExecutionDataflowBlockOptions() { BoundedCapacity = 1 });
-                executionBlock.LinkTo(ResultBlock, new DataflowLinkOptions() { PropagateCompletion = true });
-                QueueBlock.LinkTo(executionBlock, new DataflowLinkOptions() { PropagateCompletion = true });
-                ExecutionBlocks.Add(executionBlock);
+                MaxRequestsInParallel = maxRequestsInParallel;
             }
-        }
 
-        public async void Start()
-        {
-            Init();
-            while (currentBatch < batches)
-            {
-                Thread.Sleep(1000);
-                await SubmitNextRequests();
-            }
-            Console.WriteLine($"Completed: {batches}");
-        }
+            public int MaxRequestsInParallel { get; }
+            public BufferBlock<MyData> QueueBlock { get; private set; }
+            public List<TransformBlock<MyData, Result>> ExecutionBlocks { get; private set; }
+            public ActionBlock<Result> ResultBlock { get; private set; }
 
-        private async Task<int> SubmitNextRequests()
-        {
-            var emptySlots = MaxRequestsInParallel - QueueBlock.Count;
-            Console.WriteLine($"Empty slots: {emptySlots}, left = {batches - currentBatch}");
-            if (emptySlots > 0)
+            private void Init()
             {
-                var dataRequests = await GetNextRequests(emptySlots);
-                foreach (var data in dataRequests)
+                QueueBlock = new BufferBlock<MyData>(new DataflowBlockOptions() { BoundedCapacity = MaxRequestsInParallel });
+                ExecutionBlocks = new List<TransformBlock<MyData, Result>>();
+                ResultBlock = new ActionBlock<Result>(_ => _.OnFailure(() => Console.WriteLine($"Error: {_.Error}")));
+
+                for (int blockIndex = 0; blockIndex < MaxRequestsInParallel; blockIndex++)
                 {
-                    await QueueBlock.SendAsync(data);
+                    var executionBlock = new TransformBlock<MyData, Result>((d) =>
+                    {
+                        return ExecuteAsync(d);
+                    }, new ExecutionDataflowBlockOptions() { BoundedCapacity = 1 });
+                    executionBlock.LinkTo(ResultBlock, new DataflowLinkOptions() { PropagateCompletion = true });
+                    QueueBlock.LinkTo(executionBlock, new DataflowLinkOptions() { PropagateCompletion = true });
+                    ExecutionBlocks.Add(executionBlock);
                 }
             }
-            return emptySlots;
-        }
 
-        private async Task<List<MyData>> GetNextRequests(int request)
-        {
-            MyData[] myDatas = new MyData[request];
-            Task<List<MyData>> task = Task<List<MyData>>.Run(() =>
+            public static Result ExecuteAsync(MyData myData)
             {
-                for (int i = 0; i < request; i++)
+                //try
+                //{
+                    WebClient web = new WebClient();
+                    TaskCompletionSource<Result> res = new TaskCompletionSource<Result>();
+                    Task task = Task<Result>.Run(() => Thread.Sleep(5000));
+                    task.Wait();
+                    Console.WriteLine($"Data = {myData}");
+                    if (myData != null && myData.Id % 9 == 0)
+                        throw new Exception("Test");
+                    return Result.Ok();
+                //}
+                //catch (Exception ex)
+                //{
+                //    return Result.Failure($"Exception: {ex.Message}");
+                //}
+            }
+
+            public async void Start()
+            {
+                Init();
+                while (currentBatch < batches)
                 {
-                    myDatas[i++] = new MyData(currentBatch);
-                    currentBatch++;
+                    Thread.Sleep(1000);
+                    await SubmitNextRequests();
                 }
-                return new List<MyData>(myDatas);
-            });
-            return await task;
+                Console.WriteLine($"Completed: {batches}");
+            }
+
+            private async Task<int> SubmitNextRequests()
+            {
+                var emptySlots = MaxRequestsInParallel - QueueBlock.Count;
+                Console.WriteLine($"Empty slots: {emptySlots}, left = {batches - currentBatch}");
+                if (emptySlots > 0)
+                {
+                    var dataRequests = await GetNextRequests(emptySlots);
+                    foreach (var data in dataRequests)
+                    {
+                        await QueueBlock.SendAsync(data);
+                    }
+                }
+                return emptySlots;
+            }
+
+            private async Task<List<MyData>> GetNextRequests(int request)
+            {
+                MyData[] myDatas = new MyData[request];
+                Task<List<MyData>> task = Task<List<MyData>>.Run(() =>
+                {
+                    for (int i = 0; i < request; i++)
+                    {
+                        myDatas[i++] = new MyData(currentBatch);
+                        currentBatch++;
+                    }
+                    return new List<MyData>(myDatas);
+                });
+                return await task;
+            }
+        }
+
+        public class MyData
+        {
+            public int Id { get; set; }
+            public MyData(int id) => Id = id;
+            public override string ToString() { return Id.ToString(); }
         }
     }
-
-    public class MyData
-    {
-        public int Id { get; set; }
-        public MyData(int id) => Id = id;
-        public override string ToString() { return Id.ToString(); }
-    }
-}
